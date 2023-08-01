@@ -1,0 +1,78 @@
+version: "3.4"
+
+services:
+  elasticsearch:
+    image: elasticsearch:7.16.2
+    container_name: elasticsearch
+    restart: unless-stopped
+    configs:
+      - source: elastic_config
+        target: /usr/share/elasticsearch/config/elasticsearch.yml
+    volumes:
+      - ./data/monitor/elasticsearch:/var/lib/elasticsearch/data
+    environment:
+      ES_JAVA_OPTS: "-Xmx256m -Xms256m"
+      discovery.type: single-node
+      ELASTIC_PASSWORD: 1qazxsw2
+      XPACK_SECURITY_ENABLED: false
+    networks:
+      - elk-network
+
+  logstash:
+    image: logstash:7.16.2
+    container_name: logstash
+    restart: unless-stopped
+    configs:
+      - source: logstash_config
+        target: /usr/share/logstash/config/logstash.yml
+      - source: logstash_pipeline
+        target: /usr/share/logstash/pipeline/logstash.conf
+    networks:
+      - elk-network
+    environment:
+      LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+
+  kibana:
+    image: kibana:7.16.2
+    container_name: kibana
+    restart: unless-stopped
+    ports:
+      - 5601:5601
+    networks:
+      - elk-network
+    configs:
+      - source: kibana_config
+        target: /usr/share/kibana/config/kibana.yml
+
+  apm:
+    image: docker.elastic.co/apm/apm-server:7.16.2
+    command: >
+      apm-server -e
+         -E output.elasticsearch.hosts=["elasticsearch:9200"]
+         -E output.elasticsearch.protocol=http
+         -E output.elasticsearch.username=elastic
+         -E output.elasticsearch.password=1qazxsw2
+         -E output.elasticsearch.ssl.enabled=false
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    networks:
+      - elk-network
+
+configs:
+  elastic_config:
+    file: ./elasticsearch/config/elasticsearch.yml
+  logstash_config:
+    file: ./logstash/config/logstash.yml
+  logstash_pipeline:
+    file: ./logstash/pipeline/logstash.conf
+  kibana_config:
+    file: ./kibana/config/kibana.yml
+
+networks:
+  elk-network:
+    driver: bridge
