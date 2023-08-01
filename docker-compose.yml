@@ -1,0 +1,130 @@
+version: "3.4"
+
+services:
+  elasticsearch:
+    image: elasticsearch:7.16.2
+    container_name: elasticsearch
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=500ms",
+        ]
+      retries: 300
+      interval: 1s
+    volumes:
+      - ./data/monitor/elasticsearch:/var/lib/elasticsearch/data
+      - type: bind
+        source: ./elasticsearch/config/elasticsearch.yml
+        target: /usr/share/elasticsearch/config/elasticsearch.yml
+        read_only: true
+    environment:
+      ES_JAVA_OPTS: "-Xmx256m -Xms256m"
+      discovery.type: single-node
+      ELASTIC_PASSWORD: 1qazxsw2
+      XPACK_SECURITY_ENABLED: false
+    networks:
+      - elk-network
+    ports:
+      - 9200:9200
+      - 9300:9300
+
+  logstash:
+    image: logstash:7.16.2
+    container_name: logstash
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ./logstash/config/logstash.yml
+        target: /usr/share/logstash/config/logstash.yml
+        read_only: true
+      - type: bind
+        source: ./logstash/pipeline
+        target: /usr/share/logstash/pipeline
+        read_only: true
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - elk-network
+    ports:
+      - "5000:5000/tcp"
+      - "5000:5000/udp"
+      - "9600:9600"
+    environment:
+      LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+
+  kibana:
+    image: kibana:7.16.2
+    container_name: kibana
+    restart: unless-stopped
+    ports:
+      - 5601:5601
+    networks:
+      - elk-network
+    volumes:
+      - type: bind
+        source: ./kibana/config/kibana.yml
+        target: /usr/share/kibana/config/kibana.yml
+        read_only: true
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  apm:
+    image: docker.elastic.co/apm/apm-server:7.16.2
+    ports:
+      - "8200:8200"
+    command: >
+      apm-server -e
+         -E output.elasticsearch.hosts=["elasticsearch:9200"]
+         -E output.elasticsearch.protocol=http
+         -E output.elasticsearch.username=elastic
+         -E output.elasticsearch.password=1qazxsw2
+         -E output.elasticsearch.ssl.enabled=false
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
+        max-file: "5"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - elk-network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--write-out",
+          "'HTTP %{http_code}'",
+          "--silent",
+          "--output",
+          "/dev/null",
+          "http://localhost:8200/healthcheck",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+networks:
+  elk-network:
+    driver: bridge
